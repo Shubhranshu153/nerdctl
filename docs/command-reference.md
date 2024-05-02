@@ -222,6 +222,8 @@ User flags:
 - :nerd_face: `--umask`: Set the umask inside the container. Defaults to 0022.
   Corresponds to Podman CLI.
 - :whale: `--group-add`: Add additional groups to join
+- :nerd_face: `--uidmap`: specify UID mapping rang (format: container-uid:host-uid:range)
+- :nerd_face: `--gidmap`: specify GID mapping rang (format: container-gid:host-gid:range)
 
 Security flags:
 

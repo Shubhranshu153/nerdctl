@@ -25,7 +25,8 @@ import (
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/oci"
-	"github.com/containerd/nerdctl/pkg/api/types"
+	"github.com/containerd/nerdctl/v2/pkg/api/types"
+	"github.com/containerd/nerdctl/v2/pkg/imgutil"
 	"github.com/docker/go-units"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
@@ -131,4 +132,8 @@ func WithWindowsProcessIsolated() oci.SpecOpts {
 		}
 		return nil
 	}
+}
+
+func generateSnapshotOption(id string, ensured *imgutil.EnsuredImage, options types.ContainerCreateOptions) (containerd.NewContainerOpts, error) {
+	return containerd.WithNewSnapshot(id, ensured.Image), nil
 }

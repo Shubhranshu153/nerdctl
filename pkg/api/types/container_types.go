@@ -255,6 +255,12 @@ type ContainerCreateOptions struct {
 
 	// ImagePullOpt specifies image pull options which holds the ImageVerifyOptions for verifying the image.
 	ImagePullOpt ImagePullOptions
+
+	// uidmap specifies the usernamespace mapping for the container
+	Uidmap string
+
+	// gidmap specifies the groupnamespace mapping for the container
+	Gidmap string
 }
 
 // ContainerStopOptions specifies options for `nerdctl (container) stop`.

@@ -97,12 +97,6 @@ func Create(ctx context.Context, client *containerd.Client, args []string, netMa
 		oci.WithDefaultSpec(),
 	)
 
-	platformOpts, err := setPlatformOptions(ctx, client, id, netManager.NetworkOptions().UTSNamespace, &internalLabels, options)
-	if err != nil {
-		return nil, nil, err
-	}
-	opts = append(opts, platformOpts...)
-
 	var ensuredImage *imgutil.EnsuredImage
 	if !options.Rootfs {
 		var platformSS []string // len: 0 or 1
@@ -120,6 +114,12 @@ func Create(ctx context.Context, client *containerd.Client, args []string, netMa
 			return nil, nil, err
 		}
 	}
+
+	platformOpts, err := setPlatformOptions(ctx, client, id, netManager.NetworkOptions().UTSNamespace, &internalLabels, options)
+	if err != nil {
+		return nil, nil, err
+	}
+	opts = append(opts, platformOpts...)
 
 	rootfsOpts, rootfsCOpts, err := generateRootfsOpts(args, id, ensuredImage, options)
 	if err != nil {
@@ -316,7 +316,14 @@ func generateRootfsOpts(args []string, id string, ensured *imgutil.EnsuredImage,
 		cOpts = append(cOpts,
 			containerd.WithImage(ensured.Image),
 			containerd.WithSnapshotter(ensured.Snapshotter),
-			containerd.WithNewSnapshot(id, ensured.Image),
+		)
+
+		newSnapshotOpts, err := generateSnapshotOption(id, ensured, options)
+		if err != nil {
+			return nil, nil, err
+		}
+		cOpts = append(cOpts,
+			newSnapshotOpts,
 			containerd.WithImageStopSignal(ensured.Image, "SIGTERM"),
 		)
 

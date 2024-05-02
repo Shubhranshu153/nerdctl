@@ -18,7 +18,9 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/containerd/containerd"
@@ -32,6 +34,7 @@ import (
 	"github.com/containerd/nerdctl/pkg/idutil/containerwalker"
 	"github.com/containerd/nerdctl/pkg/rootlessutil"
 	"github.com/containerd/nerdctl/pkg/strutil"
+	"github.com/containerd/nerdctl/v2/pkg/imgutil"
 	"github.com/docker/go-units"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
@@ -39,6 +42,31 @@ import (
 // WithoutRunMount returns a SpecOpts that unmounts the default tmpfs on "/run"
 func WithoutRunMount() func(ctx context.Context, client oci.Client, c *containers.Container, s *oci.Spec) error {
 	return oci.WithoutRunMount
+}
+
+func parseIDMapping(mapping string) (specs.LinuxIDMapping, error) {
+	// We expect 3 parts, but limit to 4 to allow detection of invalid values.
+	parts := strings.SplitN(mapping, ":", 4)
+	if len(parts) != 3 {
+		return specs.LinuxIDMapping{}, errors.New("user namespace mappings require the format `container-id:host-id:size`")
+	}
+	cID, err := strconv.ParseUint(parts[0], 0, 32)
+	if err != nil {
+		return specs.LinuxIDMapping{}, fmt.Errorf("invalid container id for user namespace remapping: %w", err)
+	}
+	hID, err := strconv.ParseUint(parts[1], 0, 32)
+	if err != nil {
+		return specs.LinuxIDMapping{}, fmt.Errorf("invalid host id for user namespace remapping: %w", err)
+	}
+	size, err := strconv.ParseUint(parts[2], 0, 32)
+	if err != nil {
+		return specs.LinuxIDMapping{}, fmt.Errorf("invalid size for user namespace remapping: %w", err)
+	}
+	return specs.LinuxIDMapping{
+		ContainerID: uint32(cID),
+		HostID:      uint32(hID),
+		Size:        uint32(size),
+	}, nil
 }
 
 func setPlatformOptions(ctx context.Context, client *containerd.Client, id, uts string, internalLabels *internalLabels, options types.ContainerCreateOptions) ([]oci.SpecOpts, error) {
@@ -127,6 +155,18 @@ func setPlatformOptions(ctx context.Context, client *containerd.Client, id, uts 
 		return nil, err
 	}
 
+	if uidmap, gidmap := options.Uidmap, options.Gidmap; uidmap != "" && gidmap != "" {
+		uidMap, err := parseIDMapping(uidmap)
+		if err != nil {
+			return nil, err
+		}
+		gidMap, err := parseIDMapping(gidmap)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts,
+			oci.WithUserNamespace([]specs.LinuxIDMapping{uidMap}, []specs.LinuxIDMapping{gidMap}))
+	}
 	return opts, nil
 }
 
@@ -250,4 +290,21 @@ func withOOMScoreAdj(score int) oci.SpecOpts {
 		s.Process.OOMScoreAdj = &score
 		return nil
 	}
+}
+
+func generateSnapshotOption(id string, ensured *imgutil.EnsuredImage, options types.ContainerCreateOptions) (containerd.NewContainerOpts, error) {
+	if uidmap, gidmap := options.Uidmap, options.Gidmap; uidmap != "" && gidmap != "" {
+		uidMap, err := parseIDMapping(uidmap)
+		if err != nil {
+			return nil, err
+		}
+		gidMap, err := parseIDMapping(gidmap)
+		if err != nil {
+			return nil, err
+		}
+		return containerd.WithRemappedSnapshot(id, ensured.Image, uidMap.HostID, gidMap.HostID), nil
+	} else {
+		return containerd.WithNewSnapshot(id, ensured.Image), nil
+	}
+
 }
