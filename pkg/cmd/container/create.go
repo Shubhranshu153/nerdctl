@@ -53,6 +53,7 @@ import (
 	"github.com/containerd/nerdctl/pkg/strutil"
 	dockercliopts "github.com/docker/cli/opts"
 	dockeropts "github.com/docker/docker/opts"
+	"github.com/docker/docker/pkg/idtools"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -113,6 +114,13 @@ func Create(ctx context.Context, client *containerd.Client, args []string, netMa
 		if err != nil {
 			return nil, nil, err
 		}
+	}
+	if options.UidMapUser != "" {
+		idMapping, err := idtools.LoadIdentityMapping(options.UidMapUser)
+		if err != nil {
+			return nil, nil, err
+		}
+		options.IdmapUser = idMapping
 	}
 
 	platformOpts, err := setPlatformOptions(ctx, client, id, netManager.NetworkOptions().UTSNamespace, &internalLabels, options)

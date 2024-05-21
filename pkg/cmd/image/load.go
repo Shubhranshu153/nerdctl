@@ -64,14 +64,17 @@ func Load(ctx context.Context, client *containerd.Client, options types.ImageLoa
 			return errors.New("stdin is empty and input flag is not specified")
 		}
 	}
+	fmt.Printf("in decompressor")
 	decompressor, err := compression.DecompressStream(options.Stdin)
 	if err != nil {
 		return err
 	}
+	fmt.Printf("in New Match Comparer")
 	platMC, err := platformutil.NewMatchComparer(options.AllPlatforms, options.Platform)
 	if err != nil {
 		return err
 	}
+	fmt.Printf("in loadImage")
 	return loadImage(ctx, client, decompressor, platMC, false, options)
 }
 

@@ -19,6 +19,7 @@ package taskutil
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -112,11 +113,8 @@ func NewTask(ctx context.Context, client *containerd.Client, container container
 		}
 		ioCreator = cioutil.NewContainerIO(namespace, logURI, true, in, os.Stdout, os.Stderr)
 	} else if flagD && logURI != "" {
-		u, err := url.Parse(logURI)
-		if err != nil {
-			return nil, err
-		}
-		ioCreator = cio.LogURI(u)
+		ioCreator = cio.NewCreator(cio.WithStdio)
+		fmt.Printf("in else loguri")
 	} else {
 		var in io.Reader
 		if flagI {

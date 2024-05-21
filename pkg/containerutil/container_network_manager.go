@@ -171,8 +171,53 @@ func (m *noneNetworkManager) InternalNetworkingOptionLabels(_ context.Context) (
 
 // ContainerNetworkingOpts Returns a slice of `oci.SpecOpts` and `containerd.NewContainerOpts` which represent
 // the network specs which need to be applied to the container with the given ID.
-func (m *noneNetworkManager) ContainerNetworkingOpts(_ context.Context, _ string) ([]oci.SpecOpts, []containerd.NewContainerOpts, error) {
+func (m *noneNetworkManager) ContainerNetworkingOpts(_ context.Context, containerID string) ([]oci.SpecOpts, []containerd.NewContainerOpts, error) {
 	// No options to return if no network settings are provided.
+	dataStore, err := clientutil.DataStore(m.globalOptions.DataRoot, m.globalOptions.Address)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	stateDir, err := ContainerStateDirPath(m.globalOptions.Namespace, dataStore, containerID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	resolvConfPath := filepath.Join(stateDir, "resolv.conf")
+	copyFileContent("/etc/resolv.conf", resolvConfPath)
+
+	etcHostsPath, err := hostsstore.AllocHostsFile(dataStore, m.globalOptions.Namespace, containerID)
+	if err != nil {
+		return nil, nil, err
+	}
+	copyFileContent("/etc/hosts", etcHostsPath)
+
+	specs := []oci.SpecOpts{
+		withDedupMounts("/etc/hosts", withCustomHosts(etcHostsPath)),
+		withDedupMounts("/etc/resolv.conf", withCustomResolvConf(resolvConfPath)),
+		oci.WithHostNamespace(specs.NetworkNamespace),
+	}
+
+	// `/etc/hostname` does not exist on FreeBSD
+	if runtime.GOOS == "linux" && m.netOpts.UTSNamespace != UtsNamespaceHost {
+		// If no hostname is set, default to first 12 characters of the container ID.
+		hostname := m.netOpts.Hostname
+		if hostname == "" {
+			hostname = containerID
+			if len(hostname) > 12 {
+				hostname = hostname[0:12]
+			}
+		}
+		m.netOpts.Hostname = hostname
+
+		hostnameOpts, err := writeEtcHostnameForContainer(m.globalOptions, m.netOpts.Hostname, containerID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if hostnameOpts != nil {
+			specs = append(specs, hostnameOpts...)
+		}
+	}
 	return []oci.SpecOpts{}, []containerd.NewContainerOpts{}, nil
 }
 
@@ -318,6 +363,11 @@ func (m *containerNetworkManager) ContainerNetworkingOpts(ctx context.Context, _
 		return nil, nil, err
 	}
 
+	userNSPath, err := ContainerUserNSPath(ctx, container)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	hostnamePath, resolvConfPath, etcHostsPath, err := m.getContainerNetworkFilePaths(containerID)
 	if err != nil {
 		return nil, nil, err
@@ -327,6 +377,10 @@ func (m *containerNetworkManager) ContainerNetworkingOpts(ctx context.Context, _
 		oci.WithLinuxNamespace(specs.LinuxNamespace{
 			Type: specs.NetworkNamespace,
 			Path: netNSPath,
+		}),
+		oci.WithLinuxNamespace(specs.LinuxNamespace{
+			Type: specs.UserNamespace,
+			Path: userNSPath,
 		}),
 		withCustomResolvConf(resolvConfPath),
 		withCustomHosts(etcHostsPath),

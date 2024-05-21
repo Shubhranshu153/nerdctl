@@ -19,6 +19,8 @@ package types
 import (
 	"io"
 	"time"
+
+	"github.com/docker/docker/pkg/idtools"
 )
 
 // ContainerStartOptions specifies options for the `nerdctl (container) start`.
@@ -257,10 +259,9 @@ type ContainerCreateOptions struct {
 	ImagePullOpt ImagePullOptions
 
 	// uidmap specifies the usernamespace mapping for the container
-	Uidmap string
+	IdmapUser idtools.IdentityMapping
 
-	// gidmap specifies the groupnamespace mapping for the container
-	Gidmap string
+	UidMapUser string
 }
 
 // ContainerStopOptions specifies options for `nerdctl (container) stop`.

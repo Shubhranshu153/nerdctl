@@ -106,6 +106,22 @@ func ContainerNetNSPath(ctx context.Context, c containerd.Container) (string, er
 	return fmt.Sprintf("/proc/%d/ns/net", task.Pid()), nil
 }
 
+// ContainerNetNSPath returns the netns path of a container.
+func ContainerUserNSPath(ctx context.Context, c containerd.Container) (string, error) {
+	task, err := c.Task(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	status, err := task.Status(ctx)
+	if err != nil {
+		return "", err
+	}
+	if status.Status != containerd.Running {
+		return "", fmt.Errorf("invalid target container: %s, should be running", c.ID())
+	}
+	return fmt.Sprintf("/proc/%d/ns/user", task.Pid()), nil
+}
+
 // UpdateStatusLabel updates the "containerd.io/restart.status"
 // label of the container according to the value of restart desired status.
 func UpdateStatusLabel(ctx context.Context, container containerd.Container, status containerd.ProcessStatus) error {

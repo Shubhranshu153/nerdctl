@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"strconv"
 	"strings"
 
@@ -32,9 +33,9 @@ import (
 	"github.com/containerd/nerdctl/pkg/bypass4netnsutil"
 	"github.com/containerd/nerdctl/pkg/containerutil"
 	"github.com/containerd/nerdctl/pkg/idutil/containerwalker"
+	"github.com/containerd/nerdctl/pkg/imgutil"
 	"github.com/containerd/nerdctl/pkg/rootlessutil"
 	"github.com/containerd/nerdctl/pkg/strutil"
-	"github.com/containerd/nerdctl/v2/pkg/imgutil"
 	"github.com/docker/go-units"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
@@ -155,17 +156,21 @@ func setPlatformOptions(ctx context.Context, client *containerd.Client, id, uts 
 		return nil, err
 	}
 
-	if uidmap, gidmap := options.Uidmap, options.Gidmap; uidmap != "" && gidmap != "" {
-		uidMap, err := parseIDMapping(uidmap)
-		if err != nil {
-			return nil, err
-		}
-		gidMap, err := parseIDMapping(gidmap)
-		if err != nil {
-			return nil, err
-		}
+	uidmaps := options.IdmapUser.UIDMaps
+	gidmaps := options.IdmapUser.GIDMaps
+
+	length := len(uidmaps)
+	for i := 0; i < length; i++ {
+		var uidMap, gidMap specs.LinuxIDMapping
+		uidMap.ContainerID = uint32(uidmaps[i].ContainerID)
+		uidMap.HostID = uint32(uidmaps[i].HostID)
+		uidMap.Size = uint32(uidmaps[i].Size)
+		gidMap.ContainerID = uint32(gidmaps[i].ContainerID)
+		gidMap.HostID = uint32(gidmaps[i].HostID)
+		gidMap.Size = uint32(gidmaps[i].Size)
 		opts = append(opts,
 			oci.WithUserNamespace([]specs.LinuxIDMapping{uidMap}, []specs.LinuxIDMapping{gidMap}))
+
 	}
 	return opts, nil
 }
@@ -293,16 +298,30 @@ func withOOMScoreAdj(score int) oci.SpecOpts {
 }
 
 func generateSnapshotOption(id string, ensured *imgutil.EnsuredImage, options types.ContainerCreateOptions) (containerd.NewContainerOpts, error) {
-	if uidmap, gidmap := options.Uidmap, options.Gidmap; uidmap != "" && gidmap != "" {
-		uidMap, err := parseIDMapping(uidmap)
-		if err != nil {
-			return nil, err
+	if len(options.IdmapUser.UIDMaps) <= 0 {
+		return containerd.WithNewSnapshot(id, ensured.Image), nil
+	}
+	if uidmap, gidmap := options.IdmapUser.UIDMaps[0], options.IdmapUser.GIDMaps[0]; uidmap.HostID != 0 && gidmap.HostID != 0 {
+		startuid := make([]uint32, len(options.IdmapUser.UIDMaps))
+		startgid := make([]uint32, len(options.IdmapUser.UIDMaps))
+		uidmaps := make([]uint32, len(options.IdmapUser.UIDMaps))
+		gidmaps := make([]uint32, len(options.IdmapUser.UIDMaps))
+		startuid[0] = 0
+		startgid[0] = 0
+		length := len(uidmaps)
+		for i := 0; i < length; i++ {
+			uidmaps[i] = uint32(options.IdmapUser.UIDMaps[i].HostID)
+			gidmaps[i] = uint32(options.IdmapUser.GIDMaps[i].HostID)
 		}
-		gidMap, err := parseIDMapping(gidmap)
-		if err != nil {
-			return nil, err
+		for i := 1; i < len(options.IdmapUser.UIDMaps); i++ {
+			startuid[i] = uint32(startuid[i-1] + uint32(options.IdmapUser.UIDMaps[i-1].Size))
+			startgid[i] = uint32(startgid[i-1] + uint32(options.IdmapUser.GIDMaps[i-1].Size))
 		}
-		return containerd.WithRemappedSnapshot(id, ensured.Image, uidMap.HostID, gidMap.HostID), nil
+		fmt.Printf("v0.0.2 startuid %v \n", startuid)
+		fmt.Printf("v0.0.2 startgid %v \n", startgid)
+		fmt.Printf("v0.0.2 uid %v \n", uidmaps)
+		fmt.Printf("v0.0.2 gid %v \n", gidmaps)
+		return containerd.StartWithRemappedSnapshot(id, ensured.Image, uidmaps, gidmaps, startuid, startgid), nil
 	} else {
 		return containerd.WithNewSnapshot(id, ensured.Image), nil
 	}
