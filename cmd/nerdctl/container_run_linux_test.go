@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -35,6 +36,7 @@ import (
 	"github.com/containerd/nerdctl/pkg/rootlessutil"
 	"github.com/containerd/nerdctl/pkg/strutil"
 	"github.com/containerd/nerdctl/pkg/testutil"
+	"github.com/sirupsen/logrus"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/icmd"
 )
@@ -325,6 +327,158 @@ func TestRunSigProxy(t *testing.T) {
 			assert.Equal(t, tc.want, sigIntRecieved, errorMsg)
 		})
 	}
+}
+
+func TestUsernsMapping(t *testing.T) {
+	t.Parallel()
+
+	image := testutil.CommonImage
+	processCmd := "sleep 30"
+	validUserns := "nerdctltestuser"
+	invalidUserns := "nonexistentuser"
+	expectedHostUID := 123456789 //setting an arbitary number to reduce collision
+
+	defer removeUsernsConfig(validUserns, expectedHostUID)
+
+	t.Run("validUserns", func(t *testing.T) {
+		if err := appendUsernsConfig(validUserns, expectedHostUID); err != nil {
+			t.Fatalf("Failed to append userns config: %v", err)
+		}
+
+		containerName := testutil.Identifier(t)
+		defer removeContainer(t, containerName)
+
+		result := runUsernsContainer(t, containerName, validUserns, image, processCmd)
+		fmt.Printf(result.Combined())
+		assert.Assert(t, result.ExitCode == 0)
+
+		actualHostUID, err := getContainerHostUID(t, containerName)
+		if err != nil {
+			t.Fatalf("Failed to get container host UID: %v", err)
+		}
+
+		if actualHostUID != expectedHostUID {
+			t.Fatalf("Expected host UID %d, got %d", expectedHostUID, actualHostUID)
+		}
+
+		t.Logf("Valid userns test passed: container mapped to host UID %d", actualHostUID)
+	})
+
+	t.Run("invalidUserns", func(t *testing.T) {
+		containerName := testutil.Identifier(t)
+
+		result := runUsernsContainer(t, containerName, invalidUserns, image, processCmd)
+		assert.Assert(t, result.ExitCode != 0)
+
+	})
+}
+
+func runUsernsContainer(t *testing.T, name, userns, image, cmd string) *icmd.Result {
+	base := testutil.NewBase(t)
+	removeContainerArgs := []string{
+		"rm", "-f", name,
+	}
+	base.Cmd(removeContainerArgs...).Run()
+
+	args := []string{
+		"run", "-d", "--userns", userns, "--name", name, image, "sh", "-c", cmd,
+	}
+	return base.Cmd(args...).Run()
+}
+
+func getContainerHostUID(t *testing.T, containerName string) (int, error) {
+	base := testutil.NewBase(t)
+	result := base.Cmd("inspect", "--format", "{{.State.Pid}}", containerName).Run()
+	if result.Error != nil {
+		return 0, fmt.Errorf("failed to get container PID: %v", result.Error)
+	}
+
+	pidStr := strings.TrimSpace(result.Stdout())
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid PID: %v", err)
+	}
+
+	stat, err := os.Stat(fmt.Sprintf("/proc/%d", pid))
+	if err != nil {
+		return 0, fmt.Errorf("failed to stat process: %v", err)
+	}
+
+	uid := int(stat.Sys().(*syscall.Stat_t).Uid)
+	return uid, nil
+}
+
+func appendUsernsConfig(userns string, hostUid int) error {
+	if err := addUser(userns, hostUid); err != nil {
+		return fmt.Errorf("failed to add user %s: %w", userns, err)
+	}
+
+	entry := fmt.Sprintf("%s:%d:65536\n", userns, hostUid)
+
+	files := []string{"/etc/subuid", "/etc/subgid"}
+	for _, file := range files {
+		f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to open %s: %w", file, err)
+		}
+		defer f.Close()
+
+		if _, err := f.WriteString(entry); err != nil {
+			return fmt.Errorf("failed to write to %s: %w", file, err)
+		}
+	}
+	return nil
+}
+
+func addUser(username string, hostId int) error {
+	cmd := exec.Command("sudo", "groupadd", "-g", strconv.Itoa(hostId), username)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("groupadd failed: %s, %w", string(output), err)
+	}
+	cmd = exec.Command("sudo", "useradd", "-u", strconv.Itoa(hostId), "-g", strconv.Itoa(hostId), "-s", "/bin/false", username)
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("useradd failed: %s, %w", string(output), err)
+	}
+	return nil
+}
+
+func removeUsernsConfig(userns string, hostUid int) {
+	if err := delUser(userns); err != nil {
+		logrus.Errorf("failed to del user %s", userns)
+		return
+	}
+
+	entry := fmt.Sprintf("%s:%d:65536\n", userns, hostUid)
+
+	files := []string{"/etc/subuid", "/etc/subgid"}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			logrus.Errorf("Failed to read %s: %v", file, err)
+			continue
+		}
+
+		newContent := strings.ReplaceAll(string(content), entry, "")
+		if err := os.WriteFile(file, []byte(newContent), 0644); err != nil {
+			logrus.Errorf("Failed to write to %s: %v", file, err)
+		}
+	}
+}
+
+func delUser(username string) error {
+	cmd := exec.Command("sudo", "userdel", username)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("userdel failed: %s, %w", string(output), err)
+	}
+	return nil
+}
+
+func removeContainer(t *testing.T, name string) {
+	base := testutil.NewBase(t)
+	base.Cmd("rm", "-f", name).Run()
 }
 
 func TestRunWithFluentdLogDriver(t *testing.T) {
