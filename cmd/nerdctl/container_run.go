@@ -269,6 +269,8 @@ func setCreateFlags(cmd *cobra.Command) {
 	cmd.Flags().String("ipfs-address", "", "multiaddr of IPFS API (default uses $IPFS_PATH env variable if defined or local directory ~/.ipfs)")
 
 	cmd.Flags().String("isolation", "default", "Specify isolation technology for container. On Linux the only valid value is default. Windows options are host, process and hyperv with process isolation as the default")
+	cmd.Flags().String("userns", "", "Support idmapping of containers")
+	cmd.Flags().Lookup("userns").Hidden = true
 	cmd.RegisterFlagCompletionFunc("isolation", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if runtime.GOOS == "windows" {
 			return []string{"default", "host", "process", "hyperv"}, cobra.ShellCompDirectiveNoFileComp

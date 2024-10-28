@@ -128,6 +128,26 @@ func Create(ctx context.Context, client *containerd.Client, args []string, netMa
 	opts = append(opts, rootfsOpts...)
 	cOpts = append(cOpts, rootfsCOpts...)
 
+	if options.Userns != "" {
+		userNameSpaceOpts, userNameSpaceCOpts, err := getUserNamespaceOpts(ctx, client, &options, *ensuredImage, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		opts = append(opts, userNameSpaceOpts...)
+		cOpts = append(cOpts, userNameSpaceCOpts...)
+
+		userNsOpts, err := getContainerUserNamespaceNetOpts(ctx, client, netManager)
+		if err != nil {
+			return nil, nil, err
+		}
+		if userNsOpts != nil {
+			opts = append(opts, userNsOpts...)
+		}
+
+	} else {
+		cOpts = append(cOpts, containerd.WithNewSnapshot(id, ensuredImage.Image))
+	}
+
 	if options.Workdir != "" {
 		opts = append(opts, oci.WithProcessCwd(options.Workdir))
 	}
@@ -316,7 +336,6 @@ func generateRootfsOpts(args []string, id string, ensured *imgutil.EnsuredImage,
 		cOpts = append(cOpts,
 			containerd.WithImage(ensured.Image),
 			containerd.WithSnapshotter(ensured.Snapshotter),
-			containerd.WithNewSnapshot(id, ensured.Image),
 			containerd.WithImageStopSignal(ensured.Image, "SIGTERM"),
 		)
 

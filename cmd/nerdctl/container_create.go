@@ -390,6 +390,10 @@ func processContainerCreateOptions(cmd *cobra.Command) (opt types.ContainerCreat
 	}
 	// #endregion
 
+	opt.Userns, err = cmd.Flags().GetString("userns")
+	if err != nil {
+		return
+	}
 	// #region for image pull and verify options
 	imageVerifyOpt, err := processImageVerifyOptions(cmd)
 	if err != nil {
