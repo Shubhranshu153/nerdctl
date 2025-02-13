@@ -20,6 +20,9 @@ import (
 	"testing"
 
 	"github.com/containerd/nerdctl/v2/pkg/testutil"
+	"github.com/containerd/nerdctl/v2/pkg/testutil/nerdtest"
+	"github.com/containerd/nerdctl/v2/pkg/testutil/test"
+	"gotest.tools/v3/assert"
 )
 
 func TestRunUserGID(t *testing.T) {
@@ -180,4 +183,61 @@ func TestRunAddGroup_CVE_2023_25173(t *testing.T) {
 		cmd = append(cmd, testutil.BusyboxImage, "id")
 		base.Cmd(cmd...).AssertOutContains(testCase.expected + "\n")
 	}
+}
+
+func TestUsernsMappingRunCmd(t *testing.T) {
+	nerdtest.Setup()
+	testCase := &test.Case{
+		Require: test.Not(nerdtest.ContainerdV1),
+		SubTests: []*test.Case{
+			{
+				Description: "Test container start with valid userns",
+				NoParallel:  true, // Changes system config so running in non parallel mode
+				Setup: func(data test.Data, helpers test.Helpers) {
+					data.Set("validUserns", "nerdctltestuser")
+					data.Set("expectedHostUID", "123456789")
+					if err := appendUsernsConfig(data.Get("validUserns"), data.Get("expectedHostUID")); err != nil {
+						t.Fatalf("Failed to append userns config: %v", err)
+					}
+				},
+				Cleanup: func(data test.Data, helpers test.Helpers) {
+					helpers.Anyhow("rm", "-f", data.Identifier())
+					removeUsernsConfig(t, data.Get("validUserns"), data.Get("expectedHostUID"))
+				},
+				Command: func(data test.Data, helpers test.Helpers) test.TestableCommand {
+					return helpers.Command("run", "--tty", "-d", "--userns", data.Get("validUserns"), "--name", data.Identifier(), testutil.NginxAlpineImage)
+				},
+				Expected: func(data test.Data, helpers test.Helpers) *test.Expected {
+					return &test.Expected{
+						ExitCode: 0,
+						Output: func(stdout string, info string, t *testing.T) {
+							actualHostUID, err := getContainerHostUID(helpers, data.Identifier())
+							if err != nil {
+								t.Fatalf("Failed to get container host UID: %v", err)
+							}
+							assert.Assert(t, actualHostUID == data.Get("expectedHostUID"), info)
+						},
+					}
+				},
+			},
+			{
+				Description: "Test container start with invalid userns",
+				Setup: func(data test.Data, helpers test.Helpers) {
+					data.Set("invalidUserns", "invaliduser")
+				},
+				Cleanup: func(data test.Data, helpers test.Helpers) {
+					helpers.Anyhow("rm", "-f", data.Identifier())
+				},
+				Command: func(data test.Data, helpers test.Helpers) test.TestableCommand {
+					return helpers.Command("run", "--tty", "-d", "--userns", data.Get("invalidUserns"), "--name", data.Identifier(), testutil.NginxAlpineImage)
+				},
+				Expected: func(data test.Data, helpers test.Helpers) *test.Expected {
+					return &test.Expected{
+						ExitCode: 1,
+					}
+				},
+			},
+		},
+	}
+	testCase.Run(t)
 }
