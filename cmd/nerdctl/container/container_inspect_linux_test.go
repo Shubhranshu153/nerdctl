@@ -19,6 +19,7 @@ package container
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -26,11 +27,14 @@ import (
 	"github.com/docker/go-connections/nat"
 	"gotest.tools/v3/assert"
 
+	"github.com/containerd/nerdctl/mod/tigron/expect"
+	"github.com/containerd/nerdctl/mod/tigron/test"
 	"github.com/containerd/nerdctl/v2/pkg/infoutil"
 	"github.com/containerd/nerdctl/v2/pkg/inspecttypes/dockercompat"
 	"github.com/containerd/nerdctl/v2/pkg/labels"
 	"github.com/containerd/nerdctl/v2/pkg/rootlessutil"
 	"github.com/containerd/nerdctl/v2/pkg/testutil"
+	"github.com/containerd/nerdctl/v2/pkg/testutil/nerdtest"
 )
 
 func TestContainerInspectContainsPortConfig(t *testing.T) {
@@ -454,6 +458,39 @@ func TestContainerInspectDevices(t *testing.T) {
 		},
 	}
 	assert.DeepEqual(t, expectedDevices, inspect.HostConfig.Devices)
+}
+
+func TestContainerInspectUser(t *testing.T) {
+	nerdtest.Setup()
+
+	const testFileName = "nerdctl-user-test"
+
+	testCase := &test.Case{
+		Description: "Container inspect contains User",
+		Setup: func(data test.Data, helpers test.Helpers) {
+			dockerfile := fmt.Sprintf(`
+FROM %s
+RUN groupadd -r test && useradd -r -g test test
+USER test
+`, testutil.UbuntuImage)
+
+			err := os.WriteFile(filepath.Join(data.TempDir(), "Dockerfile"), []byte(dockerfile), 0o600)
+			assert.NilError(helpers.T(), err)
+
+			data.Set("buildCtx", data.TempDir())
+			helpers.Ensure("build", "-t", data.Identifier(), data.Get("buildCtx"))
+			helpers.Ensure("create", "--name", data.Identifier(), "--user", "test", data.Identifier())
+		},
+		Cleanup: func(data test.Data, helpers test.Helpers) {
+			helpers.Anyhow("rm", "-f", data.Identifier())
+		},
+		Command: func(data test.Data, helpers test.Helpers) test.TestableCommand {
+			return helpers.Command("inspect", "--format", "{{.Config.User}}", data.Identifier())
+		},
+		Expected: test.Expects(0, nil, expect.Equals("test\n")),
+	}
+
+	testCase.Run(t)
 }
 
 type hostConfigValues struct {
