@@ -62,7 +62,7 @@ func (p platformParser) DefaultSpec() platforms.Platform {
 }
 
 func Build(ctx context.Context, client *containerd.Client, options types.BuilderBuildOptions) error {
-	buildctlBinary, buildctlArgs, needsLoading, metaFile, tags, cleanup, err := generateBuildctlArgs(ctx, client, options)
+	buildctlBinary, buildctlArgs, needsLoading, metaFile, tags, cleanup, configReader, err := generateBuildctlArgs(ctx, client, options)
 	if err != nil {
 		return err
 	}
@@ -71,8 +71,10 @@ func Build(ctx context.Context, client *containerd.Client, options types.Builder
 	}
 
 	log.L.Debugf("running %s %v", buildctlBinary, buildctlArgs)
+
 	buildctlCmd := exec.Command(buildctlBinary, buildctlArgs...)
 	buildctlCmd.Env = os.Environ()
+	buildctlCmd.ExtraFiles = []*os.File{configReader}
 
 	var buildctlStdout io.Reader
 	if needsLoading {
@@ -194,22 +196,22 @@ func loadImage(ctx context.Context, in io.Reader, namespace, address, snapshotte
 }
 
 func generateBuildctlArgs(ctx context.Context, client *containerd.Client, options types.BuilderBuildOptions) (buildCtlBinary string,
-	buildctlArgs []string, needsLoading bool, metaFile string, tags []string, cleanup func(), err error) {
+	buildctlArgs []string, needsLoading bool, metaFile string, tags []string, cleanup func(), configFd *os.File, err error) {
 
 	buildctlBinary, err := buildkitutil.BuildctlBinary()
 	if err != nil {
-		return "", nil, false, "", nil, nil, err
+		return "", nil, false, "", nil, nil, nil, err
 	}
 
 	output := options.Output
 	if output == "" {
 		info, err := client.Server(ctx)
 		if err != nil {
-			return "", nil, false, "", nil, nil, err
+			return "", nil, false, "", nil, nil, nil, err
 		}
 		sharable, err := isImageSharable(options.BuildKitHost, options.GOptions.Namespace, info.UUID, options.GOptions.Snapshotter, options.Platform)
 		if err != nil {
-			return "", nil, false, "", nil, nil, err
+			return "", nil, false, "", nil, nil, nil, err
 		}
 		if sharable {
 			output = "type=image,unpack=true" // ensure the target stage is unlazied (needed for any snapshotters)
@@ -238,7 +240,7 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 		ref := tags[0]
 		parsedReference, err := referenceutil.Parse(ref)
 		if err != nil {
-			return "", nil, false, "", nil, nil, err
+			return "", nil, false, "", nil, nil, nil, err
 		}
 		output += ",name=" + parsedReference.String()
 
@@ -246,7 +248,7 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 		for idx, tag := range tags {
 			parsedReference, err = referenceutil.Parse(tag)
 			if err != nil {
-				return "", nil, false, "", nil, nil, err
+				return "", nil, false, "", nil, nil, nil, err
 			}
 			tags[idx] = parsedReference.String()
 		}
@@ -272,7 +274,7 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 			var err error
 			dir, err = buildkitutil.WriteTempDockerfile(options.Stdin)
 			if err != nil {
-				return "", nil, false, "", nil, nil, err
+				return "", nil, false, "", nil, nil, nil, err
 			}
 			cleanup = func() {
 				os.RemoveAll(dir)
@@ -287,12 +289,12 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 	}
 	dir, file, err = buildkitutil.BuildKitFile(dir, file)
 	if err != nil {
-		return "", nil, false, "", nil, nil, err
+		return "", nil, false, "", nil, nil, nil, err
 	}
 
 	buildCtx, err := parseContextNames(options.ExtendedBuildContext)
 	if err != nil {
-		return "", nil, false, "", nil, nil, err
+		return "", nil, false, "", nil, nil, nil, err
 	}
 
 	for k, v := range buildCtx {
@@ -307,7 +309,7 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 		if isOCILayout := strings.HasPrefix(v, "oci-layout://"); isOCILayout {
 			args, err := parseBuildContextFromOCILayout(k, v)
 			if err != nil {
-				return "", nil, false, "", nil, nil, err
+				return "", nil, false, "", nil, nil, nil, err
 			}
 
 			buildctlArgs = append(buildctlArgs, args...)
@@ -316,7 +318,7 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 
 		path, err := filepath.Abs(v)
 		if err != nil {
-			return "", nil, false, "", nil, nil, err
+			return "", nil, false, "", nil, nil, nil, err
 		}
 		buildctlArgs = append(buildctlArgs, fmt.Sprintf("--local=%s=%s", k, path))
 		buildctlArgs = append(buildctlArgs, fmt.Sprintf("--opt=context:%s=local:%s", k, k))
@@ -363,7 +365,7 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 				}
 			}
 		} else {
-			return "", nil, false, "", nil, nil, fmt.Errorf("invalid build arg %q", ba)
+			return "", nil, false, "", nil, nil, nil, fmt.Errorf("invalid build arg %q", ba)
 		}
 	}
 
@@ -406,7 +408,7 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 			optAttestType := strings.TrimPrefix(optAttestType, "type=")
 			buildctlArgs = append(buildctlArgs, fmt.Sprintf("--opt=attest:%s=%s", optAttestType, optAttestAttrs))
 		} else {
-			return "", nil, false, "", nil, nil, fmt.Errorf("attestation type not specified")
+			return "", nil, false, "", nil, nil, nil, fmt.Errorf("attestation type not specified")
 		}
 	}
 
@@ -435,7 +437,7 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 	if options.IidFile != "" {
 		file, err := os.CreateTemp("", "buildkit-meta-*")
 		if err != nil {
-			return "", nil, false, "", nil, cleanup, err
+			return "", nil, false, "", nil, cleanup, nil, err
 		}
 		defer file.Close()
 		metaFile = file.Name()
@@ -457,12 +459,29 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 	if len(options.ExtraHosts) > 0 {
 		extraHosts, err := containerutil.ParseExtraHosts(options.ExtraHosts, options.GOptions.HostGatewayIP, "=")
 		if err != nil {
-			return "", nil, false, "", nil, nil, err
+			return "", nil, false, "", nil, nil, nil, err
 		}
 		buildctlArgs = append(buildctlArgs, "--opt=add-hosts="+strings.Join(extraHosts, ","))
 	}
+	var configReader *os.File
+	var configWriter *os.File
+	configReader, configWriter, err = os.Pipe()
 
-	return buildctlBinary, buildctlArgs, needsLoading, metaFile, tags, cleanup, nil
+	if options.ConfigFile != nil {
+		defer configWriter.Close()
+		jsondata, err := json.Marshal(options.ConfigFile)
+		if err != nil {
+			return "", nil, false, "", nil, nil, nil, fmt.Errorf("error marshaling JSON: %v", err)
+		}
+		// Write JSON directly to pipe
+		_, err = configWriter.Write(jsondata)
+		if err != nil {
+			return "", nil, false, "", nil, nil, nil, fmt.Errorf("error writing to pipe: %v", err)
+		}
+		buildctlArgs = append(buildctlArgs, "--config-file-fd", strconv.Itoa(3))
+	}
+
+	return buildctlBinary, buildctlArgs, needsLoading, metaFile, tags, cleanup, configReader, nil
 }
 
 func getDigestFromMetaFile(path string) (string, error) {
