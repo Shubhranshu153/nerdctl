@@ -16,7 +16,11 @@
 
 package types
 
-import "io"
+import (
+	"io"
+
+	"github.com/docker/cli/cli/config/types"
+)
 
 // BuilderBuildOptions specifies options for `nerdctl (image/builder) build`.
 type BuilderBuildOptions struct {
@@ -73,6 +77,8 @@ type BuilderBuildOptions struct {
 	Pull *bool
 	// ExtraHosts is a set of custom host-to-IP mappings.
 	ExtraHosts []string
+
+	AuthConfigs map[string]types.AuthConfig
 }
 
 // BuilderPruneOptions specifies options for `nerdctl builder prune`.
