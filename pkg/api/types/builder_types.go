@@ -16,7 +16,9 @@
 
 package types
 
-import "io"
+import (
+	"io"
+)
 
 // BuilderBuildOptions specifies options for `nerdctl (image/builder) build`.
 type BuilderBuildOptions struct {
@@ -73,6 +75,8 @@ type BuilderBuildOptions struct {
 	Pull *bool
 	// ExtraHosts is a set of custom host-to-IP mappings.
 	ExtraHosts []string
+	// Add CredentialConfig as a file path, a pipe by adding pipe:// or a file descriptor by adding fd://
+	CredentialConfigFilePath string
 }
 
 // BuilderPruneOptions specifies options for `nerdctl builder prune`.
