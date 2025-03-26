@@ -73,6 +73,8 @@ type BuilderBuildOptions struct {
 	Pull *bool
 	// ExtraHosts is a set of custom host-to-IP mappings.
 	ExtraHosts []string
+
+	Configfilefd string
 }
 
 // BuilderPruneOptions specifies options for `nerdctl builder prune`.

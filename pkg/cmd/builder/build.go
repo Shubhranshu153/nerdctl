@@ -462,6 +462,10 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 		buildctlArgs = append(buildctlArgs, "--opt=add-hosts="+strings.Join(extraHosts, ","))
 	}
 
+	if options.Configfilefd != "" {
+		buildctlArgs = append(buildctlArgs, "--config-file-fd="+options.Configfilefd)
+	}
+
 	return buildctlBinary, buildctlArgs, needsLoading, metaFile, tags, cleanup, nil
 }
 
