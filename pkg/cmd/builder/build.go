@@ -70,8 +70,33 @@ func Build(ctx context.Context, client *containerd.Client, options types.Builder
 		defer cleanup()
 	}
 
+	var buildctlCmd *exec.Cmd
+	if options.CredentialConfigFilePath != "" {
+		if strings.HasPrefix(options.CredentialConfigFilePath, "fd://") {
+			// fd://<fd>
+			fd, err := strconv.Atoi(strings.TrimPrefix(options.CredentialConfigFilePath, "fd://"))
+			if err != nil {
+				return err
+			}
+			log.L.Debugf("In fd %d", fd)
+			f := os.NewFile(uintptr(fd), "")
+			if f == nil {
+				return fmt.Errorf("invalid fd %d", fd)
+			}
+			buff := make([]byte, 1024)
+			f.Read(buff)
+			fmt.Printf("%s\n", buff)
+			buildctlArgs = append(buildctlArgs, "--credential-config-file", fmt.Sprintf("fd://%d", 3))
+			log.L.Debugf("Added path")
+			buildctlCmd.ExtraFiles = []*os.File{f}
+		} else {
+			// path
+			buildctlArgs = append(buildctlArgs, "--credential-config-file", options.CredentialConfigFilePath)
+
+		}
+	}
 	log.L.Debugf("running %s %v", buildctlBinary, buildctlArgs)
-	buildctlCmd := exec.Command(buildctlBinary, buildctlArgs...)
+	buildctlCmd = exec.Command(buildctlBinary, buildctlArgs...)
 	buildctlCmd.Env = os.Environ()
 
 	var buildctlStdout io.Reader
@@ -461,7 +486,6 @@ func generateBuildctlArgs(ctx context.Context, client *containerd.Client, option
 		}
 		buildctlArgs = append(buildctlArgs, "--opt=add-hosts="+strings.Join(extraHosts, ","))
 	}
-
 	return buildctlBinary, buildctlArgs, needsLoading, metaFile, tags, cleanup, nil
 }
 
